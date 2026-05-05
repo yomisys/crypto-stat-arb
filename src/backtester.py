@@ -23,6 +23,68 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import config
 
 
+# ─── Regime filter ───────────────────────────────────────────────────────────
+
+def apply_regime_filter(
+    signal: pd.DataFrame,
+    btc_prices: pd.Series,
+    ma_window: int = 200,
+    mode: str = "momentum",
+) -> pd.DataFrame:
+    """
+    BTC trend filter — prevents momentum from trading in bear markets.
+
+    mode="momentum":  zero out signal when BTC < MA  (only trade in uptrend)
+    mode="reversal":  zero out signal when BTC > MA  (only trade in downtrend)
+    mode="both":      always active (no filter)
+
+    Finance intuition: cross-sectional momentum historically only works
+    in trending (risk-on) regimes. In risk-off / bear markets, correlations
+    spike to 1 and the long-short spread collapses.
+    """
+    if mode == "both":
+        return signal
+
+    btc_ma  = btc_prices.rolling(ma_window, min_periods=ma_window // 2).mean()
+    uptrend = (btc_prices > btc_ma).reindex(signal.index).fillna(False)
+
+    active = uptrend if mode == "momentum" else ~uptrend
+    return signal.where(active, other=0.0)
+
+
+def apply_vol_target(
+    weights: pd.DataFrame,
+    returns: pd.DataFrame,
+    target_vol: float = 0.15,
+    vol_window: int = 20,
+    min_scale: float = 0.25,
+    max_scale: float = 2.0,
+) -> pd.DataFrame:
+    """
+    Volatility-targeted position sizing.
+
+    At each date, scale the weights so the portfolio targets `target_vol`
+    annualized volatility. Uses realized vol over the last `vol_window` days.
+
+    target_vol = 0.15  → target 15% annualized vol (typical hedge-fund target)
+    max_scale  = 2.0   → never exceed 2× the base position size
+    """
+    common_cols = weights.columns.intersection(returns.columns)
+    common_idx  = weights.index.intersection(returns.index)
+    w = weights.loc[common_idx, common_cols]
+    r = returns.loc[common_idx, common_cols]
+
+    # Historical portfolio return using lagged weights
+    port_ret   = (w.shift(1) * r).sum(axis=1)
+    daily_tgt  = target_vol / np.sqrt(365)
+    realized   = port_ret.rolling(vol_window, min_periods=vol_window // 2).std()
+    scale      = (daily_tgt / realized.replace(0, np.nan)).clip(min_scale, max_scale)
+
+    # Apply scalar to weights (shift so we use yesterday's vol estimate)
+    scaled = w.mul(scale.shift(1), axis=0)
+    return scaled.fillna(w)   # fall back to unscaled on NaN rows
+
+
 # ─── Weight construction ──────────────────────────────────────────────────────
 
 def signal_to_weights(

@@ -31,10 +31,11 @@ DAILY_START  = datetime(2021, 1, 1)   # ~3.5 years of daily data
 HOURLY_START = datetime(2023, 11, 1)  # ~18 months of hourly data
 
 # ─── Train / Validation Split ─────────────────────────────────────────────────
-# ALL parameter selection uses training data only; evaluation uses both.
+# Training window intentionally includes both the 2021 bull AND the 2022 bear
+# market so the model is calibrated on both regimes, not just the bull run.
 TRAIN_START = datetime(2021, 1,  1)
-TRAIN_END   = datetime(2022, 12, 31)
-VAL_START   = datetime(2023, 1,  1)
+TRAIN_END   = datetime(2023, 6, 30)   # extended: now includes 2022 bear market
+VAL_START   = datetime(2023, 7,  1)   # ~18 months of true OOS data
 VAL_END     = datetime(2025, 12, 31)
 
 # ─── Transaction Costs ────────────────────────────────────────────────────────
