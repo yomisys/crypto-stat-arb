@@ -35,11 +35,15 @@ def plot_cumulative_returns(
     returns_dict: dict[str, pd.Series],
     title: str = "Cumulative Returns",
     log_scale: bool = False,
+    split_date: str | None = None,
     ax: plt.Axes | None = None,
     figsize: tuple = (12, 5),
 ) -> plt.Axes:
     """
     Plot compounded wealth index (starting at $1) for each return series.
+
+    split_date: if provided (e.g. "2023-01-01"), draw a vertical dashed line
+                to visually separate the train and validation windows.
     """
     if ax is None:
         _, ax = plt.subplots(figsize=figsize)
@@ -47,7 +51,14 @@ def plot_cumulative_returns(
     for i, (label, ret) in enumerate(returns_dict.items()):
         clean = ret.dropna()
         wealth = (1 + clean).cumprod()
-        ax.plot(wealth.index, wealth.values, label=label, color=COLORS[i % len(COLORS)], lw=1.8)
+        ax.plot(wealth.index.to_numpy(), wealth.values,
+                label=label, color=COLORS[i % len(COLORS)], lw=1.8)
+
+    if split_date is not None:
+        sd = pd.Timestamp(split_date)
+        ax.axvline(sd, color="black", lw=1.5, ls="--", alpha=0.7)
+        ax.text(sd, ax.get_ylim()[1] * 0.97, "  Val start",
+                fontsize=8, color="black", va="top")
 
     if log_scale:
         ax.set_yscale("log")
@@ -243,6 +254,52 @@ def plot_strategy_comparison(
     ax2.set_title("Maximum Drawdown (%)")
     ax2.set_xlabel("Drawdown (%)")
 
+    plt.tight_layout()
+    return fig
+
+
+def plot_train_val_sharpe(
+    tv_table: pd.DataFrame,
+    top_n: int = 15,
+    title: str = "Train vs Validation Sharpe Ratio",
+    figsize: tuple = (13, 7),
+) -> plt.Figure:
+    """
+    Side-by-side horizontal bar chart of Train Sharpe vs Validation Sharpe.
+
+    Overfit strategies (Overfit Flag == 'OVERFIT') are highlighted with
+    a red border on their validation bar.
+
+    tv_table : output of evaluator.train_val_comparison()
+    """
+    df = tv_table.head(top_n).copy()
+    y  = np.arange(len(df))
+    h  = 0.35
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    train_colors = ["steelblue" if v >= 0 else "lightcoral"
+                    for v in df["Train Sharpe"]]
+    val_colors   = ["seagreen"  if v >= 0 else "tomato"
+                    for v in df["Val Sharpe"]]
+
+    bars_t = ax.barh(y + h / 2, df["Train Sharpe"].values, h,
+                     color=train_colors, label="Train (2021-2022)", alpha=0.85)
+    bars_v = ax.barh(y - h / 2, df["Val Sharpe"].values, h,
+                     color=val_colors,   label="Val (2023-2025)",   alpha=0.85)
+
+    # Mark overfit strategies with a red edge on the val bar
+    for bar, flag in zip(bars_v, df.get("Overfit Flag", [])):
+        if flag == "OVERFIT":
+            bar.set_edgecolor("red")
+            bar.set_linewidth(2.0)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(df.index, fontsize=9)
+    ax.axvline(0, color="black", lw=0.8)
+    ax.set_xlabel("Sharpe Ratio (annualized, net of 20 bps cost)")
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.legend(loc="lower right", fontsize=9)
     plt.tight_layout()
     return fig
 

@@ -30,6 +30,13 @@ CORE_CRYPTOS = [
 DAILY_START  = datetime(2021, 1, 1)   # ~3.5 years of daily data
 HOURLY_START = datetime(2023, 11, 1)  # ~18 months of hourly data
 
+# ─── Train / Validation Split ─────────────────────────────────────────────────
+# ALL parameter selection uses training data only; evaluation uses both.
+TRAIN_START = datetime(2021, 1,  1)
+TRAIN_END   = datetime(2022, 12, 31)
+VAL_START   = datetime(2023, 1,  1)
+VAL_END     = datetime(2025, 12, 31)
+
 # ─── Transaction Costs ────────────────────────────────────────────────────────
 MARKET_ORDER_COST_BPS = 20   # 0.20%  — typical taker fee on major exchanges
 LIMIT_ORDER_COST_BPS  =  7   # 0.07%  — typical maker fee
