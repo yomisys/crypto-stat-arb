@@ -592,6 +592,11 @@ def compare_strategies(results, btc_prices, ppy=PERIODS_PER_YEAR):
     rows = {name: tearsheet(res, btc_prices, name, ppy) for name, res in results.items()}
     df = pd.DataFrame(rows).T
     df.index.name = "Strategy"
+    # Transpose creates object dtype when any column is string (e.g. "Sig").
+    # Cast everything except string columns back to numeric.
+    for col in df.columns:
+        if col != "Sig":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     return df.sort_values("Sharpe Ratio", ascending=False)
 
 def train_val_comparison(results, btc_prices, ppy=PERIODS_PER_YEAR,
@@ -620,6 +625,9 @@ def train_val_comparison(results, btc_prices, ppy=PERIODS_PER_YEAR,
             "Val Sig":        va["Sig"],
         })
     df = pd.DataFrame(rows).set_index("Strategy")
+    for col in df.columns:
+        if col not in {"Overfit Flag", "Val Sig"}:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     return df.sort_values("Val Sharpe", ascending=False)
 
 # ── Portfolio combiners ───────────────────────────────────────────────────────

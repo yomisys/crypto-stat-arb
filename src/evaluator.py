@@ -292,6 +292,13 @@ def train_val_comparison(
         })
 
     df = pd.DataFrame(rows).set_index("Strategy")
+
+    # Cast numeric columns (string cols: "Overfit Flag", "Val Sig")
+    _str_cols = {"Overfit Flag", "Val Sig"}
+    for col in df.columns:
+        if col not in _str_cols:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     return df.sort_values("Val Sharpe", ascending=False)
 
 
@@ -358,6 +365,14 @@ def compare_strategies(
     }
     df = pd.DataFrame(rows).T
     df.index.name = "Strategy"
+
+    # Transpose produces object dtype for all columns when any column is string.
+    # Cast everything except the "Sig" flag back to numeric.
+    _str_cols = {"Sig"}
+    for col in df.columns:
+        if col not in _str_cols:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     if "Sharpe Ratio" in df.columns:
         df = df.sort_values("Sharpe Ratio", ascending=False)
     return df
