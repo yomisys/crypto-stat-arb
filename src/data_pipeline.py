@@ -35,11 +35,36 @@ _TF_MS = {"1d": 86_400_000, "1h": 3_600_000}
 # ─── Exchange ──────────────────────────────────────────────────────────────────
 
 def get_exchange() -> ccxt.Exchange:
-    """Return a Binance exchange instance using only public (unauthenticated) endpoints."""
-    return ccxt.binance({
-        "enableRateLimit": True,
-        "options": {"defaultType": "spot"},
-    })
+    """
+    Return the best available Binance exchange instance (public endpoints only).
+
+    Tries binance.com first; if that raises a NetworkError (geo-restricted in
+    some regions, e.g. the US), falls back to binanceus.com automatically.
+    Both have identical OHLCV history for the coins we use.
+    """
+    configs = [
+        ("binance",   {"enableRateLimit": True, "options": {"defaultType": "spot"}}),
+        ("binanceus", {"enableRateLimit": True}),
+    ]
+    for exchange_id, kwargs in configs:
+        try:
+            exc = getattr(ccxt, exchange_id)(kwargs)
+            # Quick probe — loads market list, confirms connectivity
+            exc.fetch_ticker("BTC/USDT")
+            logger.info("Connected to %s", exchange_id)
+            return exc
+        except ccxt.NetworkError:
+            logger.warning("%s unreachable, trying next endpoint ...", exchange_id)
+        except Exception:
+            pass
+
+    raise RuntimeError(
+        "Cannot connect to Binance or Binance US.\n"
+        "If you are running locally, make sure you have internet access.\n"
+        "The notebook is designed to run on Google Colab — upload\n"
+        "crypto_stat_arb.ipynb to colab.research.google.com and run\n"
+        "Runtime > Run all."
+    )
 
 
 # ─── Fetch helpers ────────────────────────────────────────────────────────────
@@ -51,6 +76,7 @@ def fetch_ohlcv_symbol(
     since_ms: int,
     until_ms: int,
     pause_sec: float = 0.3,
+    max_retries: int = 3,
 ) -> pd.DataFrame:
     """
     Paginate through CCXT fetch_ohlcv (max 1 000 bars per call) and return
@@ -58,6 +84,8 @@ def fetch_ohlcv_symbol(
 
     Columns: open, high, low, close, volume
     Index:   DatetimeIndex, tz-naive UTC
+
+    max_retries: number of NetworkError retries per page before giving up.
     """
     tf_ms = _TF_MS.get(timeframe)
     if tf_ms is None:
@@ -65,13 +93,26 @@ def fetch_ohlcv_symbol(
 
     all_bars: list = []
     current = since_ms
+    retries = 0
 
     while current < until_ms:
         try:
             bars = exchange.fetch_ohlcv(symbol, timeframe, since=current, limit=1000)
+            retries = 0  # reset on success
         except ccxt.NetworkError as exc:
-            logger.warning("Network error for %s (%s): %s — retrying in 10 s", symbol, timeframe, exc)
-            time.sleep(10)
+            retries += 1
+            if retries >= max_retries:
+                logger.error(
+                    "Max retries (%d) reached for %s (%s) — giving up: %s",
+                    max_retries, symbol, timeframe, exc,
+                )
+                break
+            wait = 5 * retries
+            logger.warning(
+                "Network error for %s (%s): %s — retry %d/%d in %ds",
+                symbol, timeframe, exc, retries, max_retries, wait,
+            )
+            time.sleep(wait)
             continue
         except ccxt.ExchangeError as exc:
             logger.error("Exchange error for %s (%s): %s — skipping", symbol, timeframe, exc)
@@ -197,15 +238,19 @@ def fetch_and_store_universe(
     since_dt = config.DAILY_START if timeframe == "1d" else config.HOURLY_START
     save_dir  = config.RAW_DAILY_DIR if timeframe == "1d" else config.RAW_HOURLY_DIR
 
-    exchange = get_exchange()
+    try:
+        exchange = get_exchange()
+    except RuntimeError as exc:
+        print(f"\n[FETCH ERROR] {exc}")
+        return {sym: False for sym in symbols}
 
-    # Filter to symbols actually listed on Binance
+    # Filter to symbols actually listed on the exchange
     try:
         markets = exchange.load_markets()
         valid_symbols = [s for s in symbols if s in markets]
         skipped = set(symbols) - set(valid_symbols)
         if skipped:
-            logger.warning("Not on Binance, skipping: %s", skipped)
+            logger.warning("Not listed, skipping: %s", skipped)
     except Exception:
         valid_symbols = symbols
 

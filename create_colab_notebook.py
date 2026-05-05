@@ -147,7 +147,17 @@ DATA_PIPELINE = '''\
 _TF_MS = {"1d": 86_400_000, "1h": 3_600_000}
 
 def _get_exchange():
-    return ccxt.binance({"enableRateLimit": True, "options": {"defaultType": "spot"}})
+    "Try binance.com first; auto-fall back to binanceus if geo-blocked."
+    for eid, kw in [("binance",   {"enableRateLimit": True, "options": {"defaultType": "spot"}}),
+                    ("binanceus", {"enableRateLimit": True})]:
+        try:
+            exc = getattr(ccxt, eid)(kw)
+            exc.fetch_ticker("BTC/USDT")
+            print(f"Connected to {eid}")
+            return exc
+        except ccxt.NetworkError:
+            pass
+    raise RuntimeError("Cannot reach Binance or Binance US. Check internet connection.")
 
 def _sym2file(sym):
     return sym.replace("/", "_")
@@ -158,11 +168,16 @@ def _file2sym(stem):
 def _fetch_ohlcv_paginated(exchange, symbol, timeframe, since_ms, until_ms):
     tf_ms = _TF_MS[timeframe]
     bars, cur = [], since_ms
+    retries = 0
     while cur < until_ms:
         try:
             batch = exchange.fetch_ohlcv(symbol, timeframe, since=cur, limit=1000)
+            retries = 0
         except ccxt.NetworkError:
-            time.sleep(10)
+            retries += 1
+            if retries >= 3:
+                break
+            time.sleep(5 * retries)
             continue
         except ccxt.ExchangeError:
             break
@@ -208,12 +223,16 @@ def _fetch_and_store_one(exchange, symbol, timeframe, since_dt, save_dir, force)
     return True
 
 def fetch_and_store_universe(timeframe="1d", symbols=None, force=False):
-    """Fetch OHLCV for all coins and cache as Parquet. Safe to re-run (incremental)."""
+    "Fetch OHLCV for all coins and cache as Parquet. Safe to re-run (incremental)."
     if symbols is None:
         symbols = TOP_CRYPTOS
     since_dt = DAILY_START if timeframe == "1d" else HOURLY_START
     save_dir = RAW_DAILY if timeframe == "1d" else RAW_HOURLY
-    exc = _get_exchange()
+    try:
+        exc = _get_exchange()
+    except RuntimeError as e:
+        print(f"[FETCH ERROR] {e}")
+        return {s: False for s in symbols}
     try:
         markets = exc.load_markets()
         valid = [s for s in symbols if s in markets]
